@@ -5,7 +5,7 @@ Julia Fractal implemented in two versions: CPU and GPU in CUDA
 
 Requirements:
 
-* cuda
+* cuda-10.0 
 * cmake v3.12
 * GLUT library (delivered with CUDA)
 
@@ -23,6 +23,9 @@ Find your params at: https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/inde
 ```bash
 cmake -DGPU_ARCH=arch=compute_52,code=sm_52 ..
 ```
+
+### Other CUDA
+Coda should work with other CUDA versions, only slight changes in CMAKELists.txt needed. (not tested with other version)
 
 # Run
 
