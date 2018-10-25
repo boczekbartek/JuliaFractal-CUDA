@@ -7,6 +7,8 @@
 
 #define REFRESH_DELAY     10 //ms
 
+#include "GL/freeglut.h"
+
 const int K = 1000; /* max iteracji Julii */
 
 __device__
@@ -20,8 +22,7 @@ int julia(float x, float y) {
     int i = 0;
     while (i < K) {
         if (x2 + y2 > R2) {
-//            if (x > 1 || y > 1 )  return 1; else return 0;
-            return 1;
+            return 0;
         }
         y = 2 * x * y + ci;
         x = x2 - y2 + cr;
@@ -29,21 +30,20 @@ int julia(float x, float y) {
         x2 = x * x;
         y2 = y * y;
     }
-//    if (x > 1 || y > 1 )  return 1; else return 0;
-    return 0;
+    return 1;
 }
 
 __global__
 void kernel(unsigned char *ptr,
-        const float dx, const float dy,
-        const float scale) {
+            const float dx, const float dy,
+            const float scale) {
     /* przeliczenie współrzędnych pikselowych (xw, yw)
        na matematyczne (x, y) z uwzględnieniem skali
        (scale) i matematycznego środka (dx, dy) */
     int xw = threadIdx.x + blockIdx.x * blockDim.x;
-    //if (xw < DIM) {
-    int yw = threadIdx.y + blockIdx.y * blockDim.y;
-    //if (yw < DIM) {
+    if (xw < DIM) {
+        int yw = threadIdx.y + blockIdx.y * blockDim.y;
+        if (yw < DIM) {
             float x = scale * (float) (xw - DIM / 2) / (DIM / 2) + dx,
                     y = scale * (float) (yw - DIM / 2) / (DIM / 2) + dy;
             int offset /* w buforze pikseli */ = xw + yw * DIM;
@@ -53,14 +53,15 @@ void kernel(unsigned char *ptr,
             ptr[offset * 4 + 1 /* G */] = 0;
             ptr[offset * 4 + 2 /* B */] = 0;
             ptr[offset * 4 + 3 /* A */] = 255;
-       // }}
+        }
+    }
 }
 
 /**************************************************/
 
+// Uncoment if you are using Windows
 //#define WIN32
 
-#include "GL/freeglut.h"
 
 static unsigned char pixbuf[DIM * DIM * 4];
 unsigned char *d_pixbuf;
@@ -69,54 +70,78 @@ static float dx = 0.0f, dy = 0.0f;
 static float scale = 1.5f;
 
 static void disp(void) {
-    printf("Displaying");
-    fflush(stdout);
     glDrawPixels(DIM, DIM, GL_RGBA, GL_UNSIGNED_BYTE, pixbuf);
     glutSwapBuffers();
 }
 
+void set_time_as_window_title(float time) {
+    char buffer[64];
+    snprintf(buffer, sizeof buffer, "Compute time: %f", time);
+    glutSetWindowTitle(buffer);
+}
+
+void setup_GPU_time_measuring(cudaEvent_t
+
+& start, cudaEvent_t& stop){
+checkCudaErrors (cudaEventCreate(
+
+&start));
+
+checkCudaErrors (cudaEventCreate(
+
+&stop));
+}
+
+float get_GPU_elapsed_time(cudaEvent_t
+
+& start, cudaEvent_t& stop){
+float elapsedTime;
+
+checkCudaErrors (cudaEventElapsedTime(
+
+&elapsedTime,
+start, stop));
+
+checkCudaErrors (cudaEventDestroy(start));
+
+checkCudaErrors (cudaEventDestroy(stop));
+
+return
+elapsedTime;
+}
+
 static void recompute() {
-    dim3 dimGrid((DIM + DIM_BLOCK - 1) / DIM_BLOCK,
-                 (DIM + DIM_BLOCK - 1) / DIM_BLOCK);
-    dim3 dimBlock(DIM_BLOCK, DIM_BLOCK);
+    dim3
+    dimGrid((DIM + DIM_BLOCK - 1) / DIM_BLOCK,
+            (DIM + DIM_BLOCK - 1) / DIM_BLOCK);
+    dim3
+    dimBlock(DIM_BLOCK, DIM_BLOCK);
 
-    cudaEvent_t start, stop; // pomiar czasu wykonania j adra
-
+    // copy pixels array to GPU
     checkCudaErrors(cudaMemcpy(d_pixbuf, pixbuf, sizeof(pixbuf),
                                cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaEventCreate(&start));
-    checkCudaErrors(cudaEventCreate(&stop));
+
+    // GPU kernel time measure init
+    cudaEvent_t start, stop;
+    setup_GPU_time_measuring(start, stop);
     checkCudaErrors(cudaEventRecord(start, 0));
 
-        kernel<<<dimGrid, dimBlock>>>(d_pixbuf, dx, dy, scale);
+    kernel << < dimGrid, dimBlock >> > (d_pixbuf, dx, dy, scale);
 
     checkCudaErrors(cudaGetLastError());
-
     checkCudaErrors(cudaEventRecord(stop, 0));
     checkCudaErrors(cudaEventSynchronize(stop));
-    float elapsedTime;
-    checkCudaErrors(cudaEventElapsedTime(&elapsedTime,
-                                         start, stop));
-    checkCudaErrors(cudaEventDestroy(start));
-    checkCudaErrors(cudaEventDestroy(stop));
 
-    //checkCudaErrors(cudaDeviceSynchronize());
+    // GPU kernel time count
+    float elapsedTime = get_GPU_elapsed_time(start, stop);
 
+    // retrieve pixels array from GPU to local array
     checkCudaErrors(cudaMemcpy(pixbuf, d_pixbuf, sizeof(pixbuf),
                                cudaMemcpyDeviceToHost));
-//    int k =0;
-//    for (k=0;k<DIM * DIM * 4; ++k){
-//        printf("%d", pixbuf[k]);
-//    }
-//    printf("\n");
-
-
     checkCudaErrors(cudaGetLastError());
-    char buffer[64];
-    snprintf(buffer, sizeof buffer, "%f", elapsedTime);
-    glutSetWindowTitle(buffer);
+
+    set_time_as_window_title(elapsedTime);
     glutPostRedisplay();
-    printf("GPU (kernel) time = %.3f ms)\n",elapsedTime);
 }
 
 static void kbd(unsigned char key, int x, int y) {
@@ -140,10 +165,8 @@ static void kbd(unsigned char key, int x, int y) {
     recompute();
 }
 
-void timerEvent(int value)
-{
-    if (glutGetWindow())
-    {
+void timerEvent(int value) {
+    if (glutGetWindow()) {
         glutPostRedisplay();
         glutTimerFunc(REFRESH_DELAY, timerEvent, 0);
     }
@@ -154,11 +177,8 @@ int main(int argc, char *argv[]) {
 
     checkCudaErrors(cudaSetDevice(0));
 
-    checkCudaErrors(cudaMalloc(&d_pixbuf,sizeof(pixbuf)));
-//    checkCudaErrors(cudaMalloc(&d_pixbuf,sizeof(float)));
-//    checkCudaErrors(cudaMalloc(&d_pixbuf,sizeof(float)));
-//    checkCudaErrors(cudaMalloc(&d_pixbuf,sizeof(float)));
-
+    // allocate memory for pixels array on GPU
+    checkCudaErrors(cudaMalloc(&d_pixbuf, sizeof(pixbuf)));
     checkCudaErrors(cudaGetLastError());
 
     glutInit(&argc, argv); /* inicjacja biblioteki GLUT */
